@@ -16,6 +16,16 @@ from .base_interface import BaseInterface
 from modules.subtitle_manager import get_srt, get_vtt, get_txt, write_file, safe_filename
 from modules.youtube_manager import get_ytdata, get_ytaudio
 
+##dev 
+import pyannote.audio
+from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+embedding_model = PretrainedSpeakerEmbedding(
+    "speechbrain/spkrec-ecapa-voxceleb",
+    device=torch.device("cuda"))
+
+from pyannote.audio import Audio
+from pyannote.core import Segment
+
 
 class FasterWhisperInference(BaseInterface):
     def __init__(self):
@@ -303,6 +313,15 @@ class FasterWhisperInference(BaseInterface):
             self.release_cuda_memory()
             self.remove_input_files([micaudio])
 
+    def segment_embedding(segment):
+        start = segment["start"]
+        # Whisper overshoots the end timestamp in the last segment
+        end = min(duration, segment["end"])
+        clip = Segment(start, end)
+        print(clip)
+        waveform, sample_rate = audio.crop(path, clip)
+        return embedding_model(waveform[None])
+                               
     def transcribe(self,
                    audio: Union[str, BinaryIO, np.ndarray],
                    lang: str,
