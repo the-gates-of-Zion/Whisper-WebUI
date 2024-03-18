@@ -21,11 +21,17 @@ def write_file(subtitle, output_file):
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(subtitle)
 
+def add_speaker(segment, speaker_key="speaker"):
+    if speaker_key in segment:
+        return segment[speaker_key] + "\n"
+    else:
+        return ''
 
 def get_srt(segments):
     output = ""
     for i, segment in enumerate(segments):
         output += f"{i + 1}\n"
+        output += add_speaker(segment)
         output += f"{timeformat_srt(segment['start'])} --> {timeformat_srt(segment['end'])}\n"
         if segment['text'].startswith(' '):
             segment['text'] = segment['text'][1:]
@@ -37,6 +43,7 @@ def get_vtt(segments):
     output = "WebVTT\n\n"
     for i, segment in enumerate(segments):
         output += f"{i + 1}\n"
+        output += add_speaker(segment)
         output += f"{timeformat_vtt(segment['start'])} --> {timeformat_vtt(segment['end'])}\n"
         if segment['text'].startswith(' '):
             segment['text'] = segment['text'][1:]

@@ -17,15 +17,24 @@ from modules.subtitle_manager import get_srt, get_vtt, get_txt, write_file, safe
 from modules.youtube_manager import get_ytdata, get_ytaudio
 
 ##dev 
-import pyannote.audio
-from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
-embedding_model = PretrainedSpeakerEmbedding(
-    "speechbrain/spkrec-ecapa-voxceleb",
-    device=torch.device("cuda"))
+
+#from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+# embedding_model = PretrainedSpeakerEmbedding(
+#     "speechbrain/spkrec-ecapa-voxceleb",
+#     device=torch.device("cuda"))
+
+#import torchaudio
+from speechbrain.inference.speaker import EncoderClassifier
+classifier = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
+
+
 
 from pyannote.audio import Audio
 from pyannote.core import Segment
+# convert to wav
+from pydub import AudioSegment
 
+from sklearn.cluster import AgglomerativeClustering
 
 class FasterWhisperInference(BaseInterface):
     def __init__(self):
@@ -39,7 +48,50 @@ class FasterWhisperInference(BaseInterface):
         self.available_compute_types = ctranslate2.get_supported_compute_types("cuda") if self.device == "cuda" else ctranslate2.get_supported_compute_types("cpu")
         self.current_compute_type = "float16" if self.device == "cuda" else "float32"
         self.default_beam_size = 1
+        # self audio
+        self.audio = Audio()
+    # ========= Speaker Diarization =============
+    def convert_file_to_wav(self, file_full_name):
+        #=== make 
+        filename, file_extension = os.path.splitext(file_full_name)
+        if file_extension=='wav':
+            print("the format looks good on the surface")
+        else:
+            # convert to wav
+            sound = AudioSegment.from_file(file_full_name)
+            file_handle = sound.export(filename + '.wav', format='wav')
+        wavAudio = filename + '.wav'
+        return wavAudio, file_handle
+    # develop segment embeddings 
+    def segment_embedding(self, segment, path, duration, embedding_size=192):
+        start = segment["start"]
+        # Whisper overshoots the end timestamp in the last segment
+        end = min(duration, segment["end"])
+        clip = Segment(start, end)
+        print(clip)
+        
+        waveform, sample_rate = self.audio.crop(path, clip)
+        
+        #embedding_model(waveform[None])
+        embedding = classifier.encode_batch(waveform).reshape([1,embedding_size])
+        return embedding
+    
+    def to_embeddings(self, segments_result, wavAudio, info_duration, progress=gr.Progress()):
+        ## 192 is the size of the embeddings
+        segments_result_len = len(segments_result)
+        embeddings = np.zeros(shape=(segments_result_len, 192))
+        for i, segment in enumerate(segments_result):
+            embeddings[i] = self.segment_embedding( segment, wavAudio, info_duration)
+            progress(i / segments_result_len, desc="Clustering..")
+        return embeddings
 
+    def cluster_speaker(self, segments, num_speakers, embeddings):
+        clustering = AgglomerativeClustering(num_speakers).fit(embeddings)
+        labels = clustering.labels_
+        for i in range(len(segments)):
+            segments[i]["speaker"] = 'SPEAKER ' + str(labels[i] + 1)
+        return segments
+    
     def transcribe_file(self,
                         fileobjs: list,
                         model_size: str,
@@ -51,6 +103,7 @@ class FasterWhisperInference(BaseInterface):
                         log_prob_threshold: float,
                         no_speech_threshold: float,
                         compute_type: str,
+                        nb_numberSpeaker: int,
                         progress=gr.Progress()
                         ) -> list:
         """
@@ -94,10 +147,11 @@ class FasterWhisperInference(BaseInterface):
         """
         try:
             self.update_model_if_needed(model_size=model_size, compute_type=compute_type, progress=progress)
-
+            
             files_info = {}
             for fileobj in fileobjs:
-                transcribed_segments, time_for_task = self.transcribe(
+                
+                transcribed_segments, time_for_task, info_duration = self.transcribe(
                     audio=fileobj.name,
                     lang=lang,
                     istranslate=istranslate,
@@ -106,7 +160,11 @@ class FasterWhisperInference(BaseInterface):
                     no_speech_threshold=no_speech_threshold,
                     progress=progress
                 )
-
+                num_speakers = nb_numberSpeaker
+                if(int(num_speakers)>=2):
+                    wav_format_audio, file_handle = self.convert_file_to_wav(fileobj.name)
+                    embeddings = self.to_embeddings(transcribed_segments, wav_format_audio, info_duration)
+                    transcribed_segments = self.cluster_speaker(transcribed_segments, num_speakers, embeddings)
                 file_name, file_ext = os.path.splitext(os.path.basename(fileobj.name))
                 file_name = safe_filename(file_name)
                 subtitle, file_path = self.generate_and_write_file(
@@ -195,7 +253,7 @@ class FasterWhisperInference(BaseInterface):
             yt = get_ytdata(youtubelink)
             audio = get_ytaudio(yt)
 
-            transcribed_segments, time_for_task = self.transcribe(
+            transcribed_segments, time_for_task, info_duration = self.transcribe(
                 audio=audio,
                 lang=lang,
                 istranslate=istranslate,
@@ -287,7 +345,7 @@ class FasterWhisperInference(BaseInterface):
 
             progress(0, desc="Loading Audio..")
 
-            transcribed_segments, time_for_task = self.transcribe(
+            transcribed_segments, time_for_task, info_duration = self.transcribe(
                 audio=micaudio,
                 lang=lang,
                 istranslate=istranslate,
@@ -313,14 +371,7 @@ class FasterWhisperInference(BaseInterface):
             self.release_cuda_memory()
             self.remove_input_files([micaudio])
 
-    def segment_embedding(segment):
-        start = segment["start"]
-        # Whisper overshoots the end timestamp in the last segment
-        end = min(duration, segment["end"])
-        clip = Segment(start, end)
-        print(clip)
-        waveform, sample_rate = audio.crop(path, clip)
-        return embedding_model(waveform[None])
+    
                                
     def transcribe(self,
                    audio: Union[str, BinaryIO, np.ndarray],
@@ -378,7 +429,8 @@ class FasterWhisperInference(BaseInterface):
             no_speech_threshold=no_speech_threshold,
         )
         progress(0, desc="Loading audio..")
-
+        
+        
         segments_result = []
         for segment in segments:
             progress(segment.start / info.duration, desc="Transcribing..")
@@ -389,7 +441,8 @@ class FasterWhisperInference(BaseInterface):
             })
 
         elapsed_time = time.time() - start_time
-        return segments_result, elapsed_time
+        info_duration = info.duration
+        return segments_result, elapsed_time, info_duration
 
     def update_model_if_needed(self,
                                model_size: str,

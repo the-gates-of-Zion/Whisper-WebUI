@@ -36,7 +36,8 @@ class App:
             return gr.Checkbox(visible=False, value=False, interactive=False)
         else:
             return gr.Checkbox(visible=True, value=False, label="Translate to English?", interactive=True)
-
+    
+    
     def launch(self):
         with self.app:
             with gr.Row():
@@ -56,6 +57,11 @@ class App:
                         cb_translate = gr.Checkbox(value=False, label="Translate to English?", interactive=True)
                     with gr.Row():
                         cb_timestamp = gr.Checkbox(value=True, label="Add a timestamp to the end of the filename", interactive=True)
+                    
+                    with gr.Row():
+                        nb_numberSpeaker = gr.Number(value=0, label="Number of speaker (larger than 1) ", visible=True)
+
+
                     with gr.Accordion("Advanced_Parameters", open=False):
                         nb_beam_size = gr.Number(label="Beam Size", value=1, precision=0, interactive=True)
                         nb_log_prob_threshold = gr.Number(label="Log Probability Threshold", value=-1.0, interactive=True)
@@ -70,8 +76,9 @@ class App:
 
                     params = [input_file, dd_model, dd_lang, dd_file_format, cb_translate, cb_timestamp]
                     advanced_params = [nb_beam_size, nb_log_prob_threshold, nb_no_speech_threshold, dd_compute_type]
+                    extra_params = [nb_numberSpeaker]
                     btn_run.click(fn=self.whisper_inf.transcribe_file,
-                                  inputs=params + advanced_params,
+                                  inputs=params + advanced_params + extra_params,
                                   outputs=[tb_indicator, files_subtitles])
                     btn_openfolder.click(fn=lambda: self.open_folder("outputs"), inputs=None, outputs=None)
                     dd_model.change(fn=self.on_change_models, inputs=[dd_model], outputs=[cb_translate])
