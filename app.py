@@ -59,7 +59,7 @@ class App:
                         cb_timestamp = gr.Checkbox(value=True, label="Add a timestamp to the end of the filename", interactive=True)
                     
                     with gr.Row():
-                        nb_numberSpeaker = gr.Number(value=0, label="Number of speaker (larger than 1) ", visible=True)
+                        nb_numberSpeaker = gr.Number(value=0, label="Number of speaker (>= 2) ", visible=True)
 
 
                     with gr.Accordion("Advanced_Parameters", open=False):
