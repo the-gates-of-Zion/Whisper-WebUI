@@ -15,26 +15,16 @@ import gradio as gr
 from .base_interface import BaseInterface
 from modules.subtitle_manager import get_srt, get_vtt, get_txt, write_file, safe_filename
 from modules.youtube_manager import get_ytdata, get_ytaudio
-
-##dev 
-
-#from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
-# embedding_model = PretrainedSpeakerEmbedding(
-#     "speechbrain/spkrec-ecapa-voxceleb",
-#     device=torch.device("cuda"))
-
+# ========= Speaker Diarization Start 1 =============
 #import torchaudio
 from speechbrain.inference.speaker import EncoderClassifier
 classifier = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
-
-
-
 from pyannote.audio import Audio
 from pyannote.core import Segment
 # convert to wav
 from pydub import AudioSegment
-
 from sklearn.cluster import AgglomerativeClustering
+# ========= Speaker Diarization End 1 =============
 
 class FasterWhisperInference(BaseInterface):
     def __init__(self):
@@ -49,8 +39,8 @@ class FasterWhisperInference(BaseInterface):
         self.current_compute_type = "float16" if self.device == "cuda" else "float32"
         self.default_beam_size = 1
         # self audio
-        self.audio = Audio()
-    # ========= Speaker Diarization =============
+        self.audio = Audio() # ========= Speaker Diarization 2 =============
+    # ========= Speaker Diarization Start 3 =============
     def convert_file_to_wav(self, file_full_name):
         #=== make 
         filename, file_extension = os.path.splitext(file_full_name)
@@ -91,7 +81,7 @@ class FasterWhisperInference(BaseInterface):
         for i in range(len(segments)):
             segments[i]["speaker"] = 'SPEAKER ' + str(labels[i] + 1)
         return segments
-    
+    # ========= Speaker Diarization End 3 =============
     def transcribe_file(self,
                         fileobjs: list,
                         model_size: str,
@@ -103,7 +93,7 @@ class FasterWhisperInference(BaseInterface):
                         log_prob_threshold: float,
                         no_speech_threshold: float,
                         compute_type: str,
-                        nb_numberSpeaker: int,
+                        nb_numberSpeaker: int, # ========= Speaker Diarization 4 =============
                         progress=gr.Progress()
                         ) -> list:
         """
@@ -160,11 +150,13 @@ class FasterWhisperInference(BaseInterface):
                     no_speech_threshold=no_speech_threshold,
                     progress=progress
                 )
-                num_speakers = nb_numberSpeaker
+                # ========= Speaker Diarization Start 5 =============
+                num_speakers = nb_numberSpeaker 
                 if(int(num_speakers)>=2):
                     wav_format_audio, file_handle = self.convert_file_to_wav(fileobj.name)
                     embeddings = self.to_embeddings(transcribed_segments, wav_format_audio, info_duration)
                     transcribed_segments = self.cluster_speaker(transcribed_segments, num_speakers, embeddings)
+                # ========= Speaker Diarization End 5 ===============
                 file_name, file_ext = os.path.splitext(os.path.basename(fileobj.name))
                 file_name = safe_filename(file_name)
                 subtitle, file_path = self.generate_and_write_file(

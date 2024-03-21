@@ -12,6 +12,16 @@ from modules.subtitle_manager import get_srt, get_vtt, get_txt, write_file, safe
 from modules.youtube_manager import get_ytdata, get_ytaudio
 
 DEFAULT_MODEL_SIZE = "large-v3"
+# ========= Speaker Diarization Start 1 =============
+#import torchaudio
+from speechbrain.inference.speaker import EncoderClassifier
+classifier = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
+from pyannote.audio import Audio
+from pyannote.core import Segment
+# convert to wav
+from pydub import AudioSegment
+from sklearn.cluster import AgglomerativeClustering
+# ========= Speaker Diarization End 1 =============
 
 
 class WhisperInference(BaseInterface):
@@ -25,6 +35,50 @@ class WhisperInference(BaseInterface):
         self.available_compute_types = ["float16", "float32"]
         self.current_compute_type = "float16" if self.device == "cuda" else "float32"
         self.default_beam_size = 1
+        # self audio
+        self.audio = Audio() # ========= Speaker Diarization 2 =============
+    # ========= Speaker Diarization Start 3 =============
+    def convert_file_to_wav(self, file_full_name):
+        #=== make 
+        filename, file_extension = os.path.splitext(file_full_name)
+        if file_extension=='wav':
+            print("the format looks good on the surface")
+        else:
+            # convert to wav
+            sound = AudioSegment.from_file(file_full_name)
+            file_handle = sound.export(filename + '.wav', format='wav')
+        wavAudio = filename + '.wav'
+        return wavAudio, file_handle
+    # develop segment embeddings 
+    def segment_embedding(self, segment, path, duration, embedding_size=192):
+        start = segment["start"]
+        # Whisper overshoots the end timestamp in the last segment
+        end = min(duration, segment["end"])
+        clip = Segment(start, end)
+        print(clip)
+        
+        waveform, sample_rate = self.audio.crop(path, clip)
+        
+        #embedding_model(waveform[None])
+        embedding = classifier.encode_batch(waveform).reshape([1,embedding_size])
+        return embedding
+    
+    def to_embeddings(self, segments_result, wavAudio, info_duration, progress=gr.Progress()):
+        ## 192 is the size of the embeddings
+        segments_result_len = len(segments_result)
+        embeddings = np.zeros(shape=(segments_result_len, 192))
+        for i, segment in enumerate(segments_result):
+            embeddings[i] = self.segment_embedding( segment, wavAudio, info_duration)
+            progress(i / segments_result_len, desc="Clustering..")
+        return embeddings
+
+    def cluster_speaker(self, segments, num_speakers, embeddings):
+        clustering = AgglomerativeClustering(num_speakers).fit(embeddings)
+        labels = clustering.labels_
+        for i in range(len(segments)):
+            segments[i]["speaker"] = 'SPEAKER ' + str(labels[i] + 1)
+        return segments
+    # ========= Speaker Diarization End 3 =============
 
     def transcribe_file(self,
                         fileobjs: list,
@@ -37,6 +91,7 @@ class WhisperInference(BaseInterface):
                         log_prob_threshold: float,
                         no_speech_threshold: float,
                         compute_type: str,
+                        nb_numberSpeaker: int, # ========= Speaker Diarization 4 =============
                         progress=gr.Progress()) -> list:
         """
         Write subtitle file from Files
@@ -95,7 +150,13 @@ class WhisperInference(BaseInterface):
                                                        progress=progress
                                                        )
                 progress(1, desc="Completed!")
-
+                # ========= Speaker Diarization Start 5 =============
+                num_speakers = nb_numberSpeaker 
+                if(int(num_speakers)>=2):
+                    wav_format_audio, file_handle = self.convert_file_to_wav(fileobj.name)
+                    embeddings = self.to_embeddings(transcribed_segments, wav_format_audio, info_duration)
+                    transcribed_segments = self.cluster_speaker(transcribed_segments, num_speakers, embeddings)
+                # ========= Speaker Diarization End 5 ===============
                 file_name, file_ext = os.path.splitext(os.path.basename(fileobj.name))
                 file_name = safe_filename(file_name)
                 subtitle, file_path = self.generate_and_write_file(
