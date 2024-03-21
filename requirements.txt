@@ -5,3 +5,8 @@ faster-whisper==0.10.1
 transformers
 gradio==4.14.0
 pytube
+speechbrain
+pyannote.audio
+pyannote.core
+pydub
+sklearn
