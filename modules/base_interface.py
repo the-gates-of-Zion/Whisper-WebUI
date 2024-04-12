@@ -18,4 +18,7 @@ class BaseInterface:
         for file_path in file_paths:
             if file_path is None or not os.path.exists(file_path):
                 continue
-            os.remove(file_path)
+            try:
+                os.remove(file_path)
+            except:
+                continue

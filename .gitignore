@@ -4,3 +4,5 @@ outputs/
 modules/__pycache__/
 models/
 modules/yt_tmp.wav
+
+.vscode
